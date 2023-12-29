@@ -123,7 +123,7 @@ def processing_server_data(rows):
         max_pos_x = max(int(rows[i][-1]) for i in range(len(rows)))
         for i in range(len(rows)):
             if len(rows) > 1:
-                marker_product = 1 if int(rows[i][-1]) == max_pos_x else 2  # упорядовачивание по координате x
+                marker_product = 2 if int(rows[i][-1]) == max_pos_x else 1  # упорядовачивание по координате x
             else:
                 marker_product = 1
             convert_data = convert_for_printer(rows[i], marker_product)

@@ -1,7 +1,6 @@
 import asyncio
 import configparser
 import os
-import keyring
 
 from scripts.Connections import get_update_status_and_data, processing_server_data, connect_bd
 from scripts.FTP_Messenger import Printer
@@ -62,20 +61,22 @@ def write_config():
     print("Заполните данные для конфигурации:")
     ip_printer = str(input("IP маркиратора: "))
     port_printer = 3550
-    logs_path = str(input("Путь к файлу для логирования: "))
-    technological_line = int(input("Номер линии: "))
-    tp = int(input("Отслеживаемый технологический пост: "))
+    # logs_path = str(input("Путь к файлу для логирования: "))
+    # technological_line = int(input("Номер линии: "))
+    # tp = int(input("Отслеживаемый технологический пост: "))
     time_update = int(input("Время обновления данных: "))
-    test_base = int(input("Тестовая база (1-вкл., 0-выкл)(DESKTOP-GMTCURD): "))
-    print("----Параметры основной базы данных-----")
-    server = str(input("Сервер: "))
-    data_base = str(input("База данных: "))
-    user = str(input("Пользователь: "))
+    # test_base = int(input("Тестовая база (1-вкл., 0-выкл)(DESKTOP-GMTCURD): "))
+    # print("----Параметры основной базы данных-----")
+    # server = str(input("Сервер: "))
+    # data_base = str(input("База данных: "))
+    # user = str(input("Пользователь: "))
 
-    config['Settings'] = {'IP_Printer': ip_printer, 'PORT_Printer': port_printer, "logs_PATH": logs_path,
-                          "technological_line": technological_line, "technological_post": tp,
-                          "time_update": time_update, "test_base": test_base, "server": server, "data_base": data_base,
-                          "user": user}
+    config['Settings'] = {'IP_Printer': ip_printer, 'PORT_Printer': port_printer,
+
+                          "time_update": time_update}
+    # "technological_line": technological_line, "technological_post": tp,"logs_PATH": logs_path,}
+    # , "test_base": test_base, "server": server, "data_base": data_base,
+    # "user": user}
     print("Сохранено")
 
     with open(config_file, 'w') as configfile:
@@ -142,6 +143,7 @@ async def async_main(printer):
     first_start = True  # Первый старт менять тут!!! Если 0 то программа печатает последнюю палету
     async_listener_task = None
     time_sleep = int(config.get('Settings', 'time_update'))
+    printer.send_message("Ожидание новой палеты...")
 
     while True:
         if printer.async_feedback == "Command_4":
@@ -153,31 +155,19 @@ async def async_main(printer):
         printer.async_feedback = None
 
         if update_status:
-            if async_listener_task is not None:
-                async_listener_task.cancel()
-                async_listener_task = None  # Обнуляем переменную
-
             print("Получаем инфо-----")
             data, info = processing_server_data(rows)
             next_status = product_cycle_while(printer, data, info)
+            printer.send_message("Ожидание новой палеты...")
             if next_status == "LastPalCommand":
                 first_start = True
         else:
-            if async_listener_task is None:
-                async_listener_task = asyncio.create_task(printer.async_printer_listener())
-            print("Данные асинхронного ответа:", printer.async_feedback)
-            print(f"Ждём {time_sleep} сек.", "-" * 30)
-            try:
-                # Ждем события в течение time_sleep секунд
-                await asyncio.wait_for(async_listener_task, timeout=time_sleep)
-            except asyncio.TimeoutError:
-                # Время ожидания истекло, переходим к следующей итерации
-                pass
+            printer.async_printer_listener(time_sleep)
             # await asyncio.sleep(time_sleep)
 
 
 if __name__ == "__main__":
-    # init_config()
+    init_config()
     config = configparser.ConfigParser()
     config.read("config.ini")
     # password = str(input("Пароль к бд: "))
@@ -187,10 +177,9 @@ if __name__ == "__main__":
 
     connect_bd()
 
-    printer_KPM = Printer()
-
-    try:
-        asyncio.run(async_main(printer_KPM))
-    except KeyboardInterrupt:
-        # Обработка прерываний
-        pass
+    while True:
+        try:
+            printer_KPM = Printer()
+            asyncio.run(async_main(printer_KPM))
+        except Exception as e:
+            print(e)

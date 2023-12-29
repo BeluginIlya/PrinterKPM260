@@ -68,53 +68,28 @@ class Printer:
         self.s = connect()
         self.async_feedback = None
 
-    async def async_printer_listener(self):
+    def async_printer_listener(self, timeout):
         print("Ждём асинхронно информацию")
-
-        try:
-            self.send_message("Ожидание новой палеты...")
-        except Exception as e:
-            print(e)
-
+        start_time = time.time()
         while True:
-            feedback = await self.async_listen_data(1)
-            extract_status, command = extract_num_string(feedback)
-            print(f"feedback: {feedback}")
-            print("--------extract", extract_status, command)
-            if str(feedback) == "0000-ok: null\n":
-                print("Команда, асинхронно полученная от маркиратора: 'СТОП'.")
-            elif command == "Command_4":
-                print("Команда, асинхронно полученная от маркиратора: 'К предыдущей палете'. Ост. прослушивание.")
-                self.async_feedback = command
+            execution_time = time.time() - start_time
+            if execution_time > timeout:
                 return
-            else:
-                print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
+            feedback = self.listen_data(1, timeout)
+            if feedback:
+                extract_status, command = extract_num_string(feedback)
+                print(f"feedback: {feedback}")
+                print("--------extract", extract_status, command)
+                if str(feedback) == "0000-ok: null\n":
+                    print("Команда, асинхронно полученная от маркиратора: 'СТОП'.")
+                elif command == "Command_4":
+                    print("Команда, асинхронно полученная от маркиратора: 'К предыдущей палете'. Ост. прослушивание.")
+                    self.async_feedback = command
+                    return
+                else:
+                    print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
+            time.sleep(5)
 
-
-    async def async_listen_data(self, number_str):
-        try:
-            buffer_data = b""
-            lines_received = 0
-            loop = asyncio.get_running_loop()
-
-            while lines_received < number_str:
-                if asyncio.current_task().cancelled():
-                    print("Корутина отменена во время ожидания данных.")
-                    break
-
-                listen_info = await loop.sock_recv(self.s, 1024)
-                if not listen_info:
-                    print("Соединение закрыто.")
-                    break
-
-                buffer_data += listen_info
-                lines_received += buffer_data.decode('utf-8').count('\n')
-
-            received_data = buffer_data.decode('utf-8')
-            return received_data
-        except Exception as e:
-            print(f"Произошла ошибка в асинхронной задаче: {e}")
-            return None
 
     def print_cycle(self, number_lines) -> str:
         send_printing_info(self.reporting_info)
@@ -188,10 +163,11 @@ class Printer:
             print("Стоп?", True if status == 'F' else False)
             return True if status == 'F' else False
 
-    def listen_data(self, number_str):
+    def listen_data(self, number_str, timeout=None):
         try:
             buffer_data = b""
             lines_received = 0
+            self.s.settimeout(timeout)
 
             while lines_received < number_str:
                 listen_info = self.s.recv(1024)
@@ -206,7 +182,7 @@ class Printer:
             print(f"Получено от устройства ({number_str} строк): {received_data}")
             return received_data
         except Exception as e:
-            print(f"Произошла ошибка: {e}")
+            print(f"{e}. Продолжаем ожидание...")
             return None
 
     def start_listen(self):
