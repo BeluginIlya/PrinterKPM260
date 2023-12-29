@@ -3,6 +3,7 @@ import configparser
 import re
 import socket
 import time
+import datetime
 
 from scripts.Connections import send_printing_info, update_status_db
 
@@ -30,15 +31,21 @@ def convert_to_ascii(input_string: str) -> bytes:
         return input_string.encode('ascii')
 
 
-def extract_num_prod(line):
-    second_line_segments = line.split('|')
-    if line and len(second_line_segments) > 6 and second_line_segments[2] == '1000':
-        try:
-            return True, int(second_line_segments[3])
-        except ValueError:
-            return False, second_line_segments[3]
+def extract_num_prod(line, p):
+    _, segment = extract_num_string(line)
+    if segment != "G-1": # На случай если напечатали отдельную не последнюю строчку
+        work_data = p.listen_data(1) # Съедаем 2 строчки
+        time.sleep(5)
+        return True, "G-1"
     else:
-        return False, None
+        second_line_segments = line.split('|')
+        if line and len(second_line_segments) > 6 and second_line_segments[2] == '1000':
+            try:
+                return True, int(second_line_segments[3])
+            except ValueError:
+                return False, second_line_segments[3]
+        else:
+            return False, None
 
 
 def extract_num_string(line):
@@ -82,7 +89,7 @@ class Printer:
                 return
             else:
                 print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
-            await asyncio.sleep(5)
+
 
     async def async_listen_data(self, number_str):
         try:
@@ -91,6 +98,10 @@ class Printer:
             loop = asyncio.get_running_loop()
 
             while lines_received < number_str:
+                if asyncio.current_task().cancelled():
+                    print("Корутина отменена во время ожидания данных.")
+                    break
+
                 listen_info = await loop.sock_recv(self.s, 1024)
                 if not listen_info:
                     print("Соединение закрыто.")
@@ -106,22 +117,20 @@ class Printer:
             return None
 
     def print_cycle(self, number_lines) -> str:
-        # send_printing_info(self.reporting_info)
+        send_printing_info(self.reporting_info)
         stop_status = self.get_stop_status()
         if not stop_status:
             self.stop_print()
         self.start_print()
         time.sleep(0.2)
         work_status, string_number = self.start_listen()
-        while work_status and string_number < number_lines:
+        while work_status and (string_number < number_lines or type(string_number) == str):
             print(string_number)
             self.send_string_message(string_number)
             if string_number == number_lines - 1:
                 work_data = self.listen_data(2)  # Съедаем 2 строчки, может быть СЛАБОЕ МЕСТО
                 self.end_print_cycle()
                 return "Next"
-            elif type(string_number) == str:
-                return string_number
             else:
                 work_data = self.listen_data(2)
                 lines = work_data.split('\n')
@@ -132,7 +141,9 @@ class Printer:
                     if type(string_number) == str:
                         return string_number
                 else:
-                    work_status, string_number = extract_num_prod(lines[1])
+                    work_status, string_number = extract_num_prod(lines[1], self)
+                    if type(string_number) == str:
+                        return string_number
 
     def init_data(self, data, reporting_info):
         self.data = data
@@ -143,7 +154,7 @@ class Printer:
         stop_info = self.listen_data(number_str=1)
         if str(stop_info) == "0000-ok: null\n":
             print("Оператор закончил печать изделия")
-            # update_status_db(self.reporting_info)
+            update_status_db(self.reporting_info)
             return True
         else:
             return False
@@ -234,21 +245,17 @@ class Printer:
             send_data_ascii.append(value_ascii)
         print("-----------------Заполненные отправляемые данные: ", send_data_ascii)
 
-        test = []
+        test = b''
         for i in range(len(send_data_ascii)):
             if i == 0:
-                self.s.sendall(send_data_ascii[0])
-                test.append(send_data_ascii[0])
+                test += send_data_ascii[0]
             elif i == len(send_data_ascii) - 1:
                 n = 12 - (len(send_data_ascii) - 1)  # запятые для элементов, которых нет, по документации)
-                self.s.sendall(send_data_ascii[i] + b',' * n)
-                test.append(send_data_ascii[i] + b',' * n)
+                test += send_data_ascii[i] + b',' * n
             else:
-                print(f"SEND MESSAGE. Index {i}, {send_data_ascii[i]} ", )
-                self.s.sendall(send_data_ascii[i] + b",")
-                test.append(send_data_ascii[i] + b",")
-
-            print("comand:", test)
-        self.s.sendall(end_command_bytes + b"\r\n")
+                test += send_data_ascii[i] + b","
+        command_bytes = test + end_command_bytes + b"\n\r"
+        print("command_bytes:", command_bytes)
+        self.s.sendall(command_bytes)
 
         self.s.recv(1024)

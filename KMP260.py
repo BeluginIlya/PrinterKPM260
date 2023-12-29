@@ -3,7 +3,7 @@ import configparser
 import os
 import keyring
 
-from scripts.Connections import get_update_status, get_data_from_server, connect_bd
+from scripts.Connections import get_update_status_and_data, processing_server_data, connect_bd
 from scripts.FTP_Messenger import Printer
 
 config_file = 'config.ini'
@@ -46,7 +46,7 @@ def init_config():
         if config:
             init_config_answer = str(input(r"Оставить текущую конфигурацию?(Да\Нет):"))
             if init_config_answer.upper() == "ДА":
-                print("Ожидание подключения...")
+                print("OK")
             elif init_config_answer.upper() == "НЕТ":
                 write_config()
             else:
@@ -148,7 +148,7 @@ async def async_main(printer):
             last_pal = True
         else:
             last_pal = False
-        update_status, count_products = get_update_status(first_start, last_pal)
+        update_status, count_products, rows = get_update_status_and_data(first_start, last_pal)
         first_start = False
         printer.async_feedback = None
 
@@ -158,28 +158,32 @@ async def async_main(printer):
                 async_listener_task = None  # Обнуляем переменную
 
             print("Получаем инфо-----")
-            data, info = get_data_from_server(count_products)
+            data, info = processing_server_data(rows)
             next_status = product_cycle_while(printer, data, info)
             if next_status == "LastPalCommand":
                 first_start = True
         else:
             if async_listener_task is None:
                 async_listener_task = asyncio.create_task(printer.async_printer_listener())
-                if printer.async_feedback == "Command_4":
-                    continue
-
             print("Данные асинхронного ответа:", printer.async_feedback)
             print(f"Ждём {time_sleep} сек.", "-" * 30)
-            await asyncio.sleep(time_sleep)
+            try:
+                # Ждем события в течение time_sleep секунд
+                await asyncio.wait_for(async_listener_task, timeout=time_sleep)
+            except asyncio.TimeoutError:
+                # Время ожидания истекло, переходим к следующей итерации
+                pass
+            # await asyncio.sleep(time_sleep)
 
 
 if __name__ == "__main__":
-    init_config()
+    # init_config()
     config = configparser.ConfigParser()
     config.read("config.ini")
-    password = str(input("Пароль к бд: "))
+    # password = str(input("Пароль к бд: "))
+    print("Ожидание подключения к маркировщику...")
     user = config.get('Settings', "user")
-    keyring.set_password("KMP260", user, password)
+    # keyring.set_password("KMP260", user, password)
 
     connect_bd()
 
