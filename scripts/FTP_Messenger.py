@@ -1,3 +1,4 @@
+import asyncio
 import configparser
 import re
 import socket
@@ -6,12 +7,13 @@ import time
 from scripts.Connections import send_printing_info, update_status_db
 
 config = configparser.ConfigParser()
-config.read('config.ini')
-ftp_server = config.get('Settings', 'ip_printer')
-ftp_port = int(config.get('Settings', 'port_printer'))
+
 
 
 def connect():
+    config.read('config.ini')
+    ftp_server = config.get('Settings', 'ip_printer')
+    ftp_port = int(config.get('Settings', 'port_printer'))
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((ftp_server, ftp_port))
     res = s.recv(1024).decode('ascii')
@@ -45,6 +47,7 @@ def extract_num_string(line):
         try:
             return True, int(second_line_segments[5]) - 1
         except ValueError:
+            print("Исключение в функции extract_num_string. Возвращаем str")
             return False, second_line_segments[5]
     else:
         return False, None
@@ -56,9 +59,54 @@ class Printer:
 
     def __init__(self):
         self.s = connect()
+        self.async_feedback = None
+
+    async def async_printer_listener(self):
+        print("Ждём асинхронно информацию")
+
+        try:
+            self.send_message("Ожидание новой палеты...")
+        except Exception as e:
+            print(e)
+
+        while True:
+            feedback = await self.async_listen_data(1)
+            extract_status, command = extract_num_string(feedback)
+            print(f"feedback: {feedback}")
+            print("--------extract", extract_status, command)
+            if str(feedback) == "0000-ok: null\n":
+                print("Команда, асинхронно полученная от маркиратора: 'СТОП'.")
+            elif command == "Command_4":
+                print("Команда, асинхронно полученная от маркиратора: 'К предыдущей палете'. Ост. прослушивание.")
+                self.async_feedback = command
+                return
+            else:
+                print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
+            await asyncio.sleep(5)
+
+    async def async_listen_data(self, number_str):
+        try:
+            buffer_data = b""
+            lines_received = 0
+            loop = asyncio.get_running_loop()
+
+            while lines_received < number_str:
+                listen_info = await loop.sock_recv(self.s, 1024)
+                if not listen_info:
+                    print("Соединение закрыто.")
+                    break
+
+                buffer_data += listen_info
+                lines_received += buffer_data.decode('utf-8').count('\n')
+
+            received_data = buffer_data.decode('utf-8')
+            return received_data
+        except Exception as e:
+            print(f"Произошла ошибка в асинхронной задаче: {e}")
+            return None
 
     def print_cycle(self, number_lines) -> str:
-        send_printing_info(self.reporting_info)
+        # send_printing_info(self.reporting_info)
         stop_status = self.get_stop_status()
         if not stop_status:
             self.stop_print()
@@ -67,10 +115,9 @@ class Printer:
         work_status, string_number = self.start_listen()
         while work_status and string_number < number_lines:
             print(string_number)
-            self.send_message(string_number)
+            self.send_string_message(string_number)
             if string_number == number_lines - 1:
-                time.sleep(0.1)
-                self.listen_data(2)  # Съедаем 2 строчки
+                work_data = self.listen_data(2)  # Съедаем 2 строчки, может быть СЛАБОЕ МЕСТО
                 self.end_print_cycle()
                 return "Next"
             elif type(string_number) == str:
@@ -96,7 +143,7 @@ class Printer:
         stop_info = self.listen_data(number_str=1)
         if str(stop_info) == "0000-ok: null\n":
             print("Оператор закончил печать изделия")
-            update_status_db(self.reporting_info)
+            # update_status_db(self.reporting_info)
             return True
         else:
             return False
@@ -166,7 +213,15 @@ class Printer:
             print("Данные не получены")
             return None, None
 
-    def send_message(self, string_number):
+    def send_message(self, message):
+        start_command = f"000B|0000|600|"
+        end_command = f"|0|0000|0|0000|0D0A"
+        message_bytes = convert_to_ascii(message)
+        start_command_bytes = start_command.encode('ascii')
+        end_command_bytes = end_command.encode('ascii')
+        self.s.sendall(start_command_bytes + message_bytes + end_command_bytes + b'\r\n')
+
+    def send_string_message(self, string_number):
         start_command = f"000B|0000|600|"
         end_command = f"|0|0000|0|0000|0D0A"
         start_command_bytes = start_command.encode('ascii')
