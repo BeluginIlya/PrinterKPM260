@@ -10,7 +10,7 @@ config = configparser.ConfigParser()
 
 
 previous_datetime = datetime.datetime(2020, 12, 25, 15, 24, 26, 740000)
-last_pal_num = 0
+last_pal_num = []
 source_connection = None
 
 def connect_bd():
@@ -48,14 +48,17 @@ def get_update_status_and_data(first_start: bool, last_pal: bool):
     if last_pal:
         # Сбрасываем время, чтобы получить последние 2 изделия
         previous_datetime = datetime.datetime(2020, 12, 25, 15, 24, 26, 740000)
-        last_pal_num = 0
+        last_pal_num.extend(0)
+
+    if len(last_pal_num) > 0:
+        last_pal_num[3:] = 0
 
     if not first_start:
 
         with io.open('sql_queries.sql', 'r', encoding='utf-8') as file:
             sql_query = file.read()
 
-        source_cursor.execute(sql_query, tp_insert, tp_insert, last_pal_num)
+        source_cursor.execute(sql_query, tp_insert, tp_insert, last_pal_num[0])
 
         rows = source_cursor.fetchmany(2)  # Получаем топ 2 строки
         print("Получили из бд", rows)
@@ -72,7 +75,7 @@ def get_update_status_and_data(first_start: bool, last_pal: bool):
             print("Сколько новых изделий на посту:", count_products)
             previous_datetime_row = max(rows, key=lambda x: x[3])
             previous_datetime = previous_datetime_row[3]
-            last_pal_num = int(previous_datetime_row[-1])
+            last_pal_num.extend(int(previous_datetime_row[-1]))
             if count_products:
                 return True, count_products, rows
             else:
@@ -86,7 +89,7 @@ def get_update_status_and_data(first_start: bool, last_pal: bool):
                                           ORDER BY Timestamp DESC;""")
         data = source_cursor.fetchmany(1)[0]
         previous_datetime = data[0]
-        last_pal_num = int(data[1])
+        last_pal_num.extend(int(data[1]))
         print("Дата, время последнего добавления:", previous_datetime, "Тип:", type(previous_datetime))
         return False, None, []
 
