@@ -23,6 +23,7 @@ def connect():
 
 
 def convert_to_ascii(input_string: str) -> bytes:
+    print("конвертация для ", input_string)
     if input_string and any('а' <= str(char) <= 'я' or 'А' <= str(char) <= 'Я' for char in input_string):
         byte_string = input_string.encode('utf-8')
         hex_representation = byte_string.hex()
@@ -67,6 +68,7 @@ class Printer:
     def __init__(self):
         self.s = connect()
         self.async_feedback = None
+        self.status = "Wait"
 
     def async_printer_listener(self, timeout):
         print("Ждём асинхронно информацию")
@@ -153,6 +155,7 @@ class Printer:
         get_status_command = "000B|0000|400|0|0|0000|0|0000|0D0A"
         get_status_bytes = get_status_command.encode('ascii')
         self.s.sendall(get_status_bytes + b"\r\n")
+        time.sleep(0.5)
         buffer_log = self.s.recv(1024)
         last_line = buffer_log.decode('ascii').splitlines()[-1]
 

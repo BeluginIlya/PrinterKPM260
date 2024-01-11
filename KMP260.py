@@ -140,10 +140,10 @@ def product_cycle_while(p: Printer, server_data, reporting_info):
 async def async_main(printer):
     config = configparser.ConfigParser()
     config.read("config.ini")
-    first_start = True  # Первый старт менять тут!!! Если 0 то программа печатает последнюю палету
+    first_start = False  # Первый старт менять тут!!! Если 0 то программа печатает последнюю палету
     async_listener_task = None
     time_sleep = int(config.get('Settings', 'time_update'))
-    printer.send_message("Ожидание новой палеты...")
+    printer.status = "Start Wait"
 
     while True:
         if printer.async_feedback == "Command_4":
@@ -155,19 +155,24 @@ async def async_main(printer):
         printer.async_feedback = None
 
         if update_status:
+            printer.status = "Work"
             print("Получаем инфо-----")
             data, info = processing_server_data(rows)
             next_status = product_cycle_while(printer, data, info)
-            printer.send_message("Ожидание новой палеты...")
+            # printer.send_message("Ожидание новой палеты...")
             if next_status == "LastPalCommand":
                 first_start = True
+            printer.status = "Start Wait"
         else:
+            if printer.status == "Start Wait":
+                printer.send_message("Ожидание новой палеты...")
+                printer.status = "Wait"
             printer.async_printer_listener(time_sleep)
             # await asyncio.sleep(time_sleep)
 
 
 if __name__ == "__main__":
-    init_config()
+    # init_config()
     config = configparser.ConfigParser()
     config.read("config.ini")
     # password = str(input("Пароль к бд: "))
@@ -178,8 +183,8 @@ if __name__ == "__main__":
     connect_bd()
 
     while True:
-        try:
-            printer_KPM = Printer()
-            asyncio.run(async_main(printer_KPM))
-        except Exception as e:
-            print(e)
+        # try:
+        printer_KPM = Printer()
+        asyncio.run(async_main(printer_KPM))
+        # except Exception as e:
+        #     print(e)
