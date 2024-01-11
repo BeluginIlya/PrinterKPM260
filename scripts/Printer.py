@@ -5,7 +5,7 @@ import socket
 import time
 import datetime
 
-from scripts.Connections import send_printing_info, update_status_db
+# from .ConnectionBroker import send_printing_info, update_status_db
 
 config = configparser.ConfigParser()
 
@@ -65,36 +65,36 @@ class Printer:
     reporting_info: list
     data: dict
 
-    def __init__(self):
+    def __init__(self, loop):
         self.s = connect()
         self.async_feedback = None
         self.status = "Wait"
+        self.loop = loop
+        self.STEP = "WAIT"
 
-    def async_printer_listener(self, timeout):
-        print("Ждём асинхронно информацию")
-        start_time = time.time()
+    async def async_printer_listener(self):
         while True:
-            execution_time = time.time() - start_time
-            if execution_time > timeout:
-                return
-            feedback = self.listen_data(1, timeout)
-            if feedback:
-                extract_status, command = extract_num_string(feedback)
-                print(f"feedback: {feedback}")
-                print("--------extract", extract_status, command)
-                if str(feedback) == "0000-ok: null\n":
-                    print("Команда, асинхронно полученная от маркиратора: 'СТОП'.")
-                elif command == "Command_4":
-                    print("Команда, асинхронно полученная от маркиратора: 'К предыдущей палете'. Ост. прослушивание.")
-                    self.async_feedback = command
-                    return
-                else:
-                    print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
-            time.sleep(5)
+            data = await self.loop.sock_recv(self.s, 1024)
+            if not data:
+                continue
+            else:
+                feedback = data.decode('ascii')
+                if feedback:
+                    extract_status, command = extract_num_string(feedback)
+                    print(f"feedback: {feedback}")
+                    print("--------extract", extract_status, command)
+                    if str(feedback) == "0000-ok: null\n":
+                        print("Команда, асинхронно полученная от маркиратора: 'СТОП'.")
+                    elif command == "Command_4":
+                        print("Команда, асинхронно полученная от маркиратора: 'К предыдущей палете'. Ост. прослушивание.")
+                        self.async_feedback = command
+                        yield True
+                    else:
+                        print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
 
 
     def print_cycle(self, number_lines) -> str:
-        send_printing_info(self.reporting_info)
+        # send_printing_info(self.reporting_info)
         stop_status = self.get_stop_status()
         if not stop_status:
             self.stop_print()
@@ -131,7 +131,7 @@ class Printer:
         stop_info = self.listen_data(number_str=1)
         if str(stop_info) == "0000-ok: null\n":
             print("Оператор закончил печать изделия")
-            update_status_db(self.reporting_info)
+            # update_status_db(self.reporting_info)
             return True
         else:
             return False
@@ -165,6 +165,8 @@ class Printer:
             # Если True значит в работе, если False значит стоит
             print("Стоп?", True if status == 'F' else False)
             return True if status == 'F' else False
+        
+
 
     def listen_data(self, number_str, timeout=None):
         try:

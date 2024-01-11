@@ -2,8 +2,10 @@ import asyncio
 import configparser
 import os
 
-from scripts.Connections import get_update_status_and_data, processing_server_data, connect_bd
-from scripts.FTP_Messenger import Printer
+from scripts.Connections import connect_bd
+from scripts.ConnectionBroker import *
+from scripts.main_loop import async_main_cycle
+from scripts.Printer import Printer
 
 config_file = 'config.ini'
 
@@ -85,92 +87,6 @@ def write_config():
     init_config()
 
 
-def product_cycle(p: Printer, server_data, reporting_info):
-    for product_data in sorted(server_data, key=lambda x: x['marker_product']):
-        print("-----------------------Изделие в печати: ", product_data)
-        m = product_data['marker_product']
-        send_info = [reporting_info[i] for i in range(len(reporting_info)) if reporting_info[i][-1] == m][0]
-        send_info_list = list(send_info)
-        print("Отчётные данные этого изделия:", send_info_list, type(send_info_list))
-        p.init_data(product_data, send_info_list)
-        command = p.print_cycle(number_lines=4)
-        if int(command[-1]) == 4:
-            continue
-        elif int(command[-1]) == 1:
-            p.init_data(server_data[0] if server_data[0]['marker_product'] == 1
-                        else server_data[1],
-                        send_info_list)
-            command = p.print_cycle(number_lines=4)
-
-
-def product_cycle_while(p: Printer, server_data, reporting_info):
-    step = 1
-    number_products = len(server_data)
-    while step < number_products + 1:
-
-        # product_data = server_data[0] if server_data[0]['marker_product'] == step else server_data[1]
-
-        if server_data[0]['marker_product'] == step:
-            product_data = server_data[0]
-        elif len(server_data) > 1:
-            product_data = server_data[1]
-        else:
-            return "OK"
-
-        m = product_data['marker_product']
-        send_info = [reporting_info[i] for i in range(len(reporting_info)) if reporting_info[i][-1] == m][0]
-        send_info_list = list(send_info)
-        p.init_data(product_data, send_info_list)
-        command = p.print_cycle(number_lines=4)
-        print(command)
-
-        if command == "Next":
-            step += 1
-        elif int(command[-1]) == 1:
-            step = 1
-        elif int(command[-1]) == 2:
-            step = 2
-        elif int(command[-1]) == 4:
-            return "LastPalCommand"
-        else:
-            step = 3
-    return "OK"
-
-
-async def async_main(printer):
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-    first_start = False  # Первый старт менять тут!!! Если 0 то программа печатает последнюю палету
-    async_listener_task = None
-    time_sleep = int(config.get('Settings', 'time_update'))
-    printer.status = "Start Wait"
-
-    while True:
-        if printer.async_feedback == "Command_4":
-            last_pal = True
-        else:
-            last_pal = False
-        update_status, count_products, rows = get_update_status_and_data(first_start, last_pal)
-        first_start = False
-        printer.async_feedback = None
-
-        if update_status:
-            printer.status = "Work"
-            print("Получаем инфо-----")
-            data, info = processing_server_data(rows)
-            next_status = product_cycle_while(printer, data, info)
-            # printer.send_message("Ожидание новой палеты...")
-            if next_status == "LastPalCommand":
-                first_start = True
-            printer.status = "Start Wait"
-        else:
-            if printer.status == "Start Wait":
-                printer.send_message("Ожидание новой палеты...")
-                printer.status = "Wait"
-            printer.async_printer_listener(time_sleep)
-            # await asyncio.sleep(time_sleep)
-
-
 if __name__ == "__main__":
     # init_config()
     config = configparser.ConfigParser()
@@ -180,11 +96,13 @@ if __name__ == "__main__":
     user = config.get('Settings', "user")
     # keyring.set_password("KMP260", user, password)
 
+    loop = asyncio.get_event_loop()
     connect_bd()
 
     while True:
-        # try:
-        printer_KPM = Printer()
-        asyncio.run(async_main(printer_KPM))
-        # except Exception as e:
-        #     print(e)
+        try:
+            printer_KPM = Printer(loop)
+            loop.run_until_complete(async_main_cycle(printer_KPM))
+        except Exception as e:
+            printer_KPM.send_message("Ошибка. Ожидайте подключение")
+            print(e)
