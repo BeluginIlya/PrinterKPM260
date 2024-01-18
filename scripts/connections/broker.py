@@ -1,5 +1,3 @@
-import asyncio
-import json
 from contextlib import asynccontextmanager
 from aio_pika.abc import (
     AbstractChannel, AbstractExchange, AbstractQueue, AbstractRobustConnection)
@@ -8,6 +6,9 @@ from typing import AsyncGenerator
 from enum import Enum
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+
+import json
+import asyncio
 
 
 class Plant(str, Enum):
@@ -34,6 +35,7 @@ class Item(BaseModel):
     production_thickness: float
     max_length: float
     max_width: float
+    pos_x: float
 
 
 class DBEntry(BaseModel):
@@ -181,25 +183,24 @@ class DBObserverRepository:
         self.queues: dict[str, AbstractQueue] = {}
         self.queue_count: int = 0
 
-    async def get_db_entry_feed(self) -> AsyncGenerator[ObserverMessage, None]:
-        '''Создает новую очередь, которая будет получать сообщения из
-        обменника типа topic.
-
-        '''
-        topic = f'db-location-events'
+    async def get_db_entry_feed(self):
+        topic = 'db-location-events'
         self.queue_count += 1
         count = self.queue_count
-        key = f'{topic}-{count}'
-        queue = await self.broker.create_topic_queue(key, topic)
-        self.queues[key] = queue
-        async with queue.iterator() as iter:
-            async for message in iter:
-                async with message.process():
-                    print(message.body.decode())
-                    if message.content_type == 'application/json':
-                        entry = ObserverMessage.model_validate_json(
-                            message.body.decode())
-                        yield entry
+        key = f'{topic}-{count - 1}'
+        key2 = f'{topic}-{count}'
+        async with self.broker as broker:
+            queue = await broker.create_topic_queue(key, topic)
+            queue2 = await broker.create_topic_queue(key2, topic)
+            self.queues[key] = queue
+            self.queues[key2] = queue2
+            for queue in self.queues.values():
+                async with queue.iterator() as iter:
+                    async for message in iter:
+                        async with message.process():
+                            if message.content_type == 'application/json':
+                                entry = ObserverMessage.model_validate_json(message.body.decode())
+                                yield entry
 #         test_json = {"plant":"rz","line":"line_1",
 # "entry":{"location_name":"TP 1","pal_no":5,"timestamp":"2024-01-11T13:36:00.150000Z",
 # 	"items":[{"barcode":"122000136301","product":"1_3НСНг-289.299.41-3-8_21.04.2023 16.04.31.uni","production_thickness":410.0,"max_length":2985.0,"max_width":2885.0},

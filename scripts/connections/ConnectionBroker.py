@@ -1,13 +1,7 @@
 import re
-import ast
-import asyncio
-import configparser
 
 from .broker import *
-
-
-config = configparser.ConfigParser()
-
+from scripts.configs import Configurate
 
 async def get_data_from_broker():
     MQ_SERVER="spa.dsk1.ru"
@@ -27,30 +21,33 @@ async def get_data_from_broker():
 
 
 def processing_server_data(items: list[Item], timestamp, pal_no): # упорядовачивание данных, объект посредник конвертации данных
-    server_data = []
-    print(f"\nitems в processing_server_data {items}\n")
+    printer_data = []
+    print(f"\nitems в processing_printer_data {items}\n")
     all_info_item: list[set] = []
-    for index in range(len(items)): # НУЖНО СОРТИРОВАТЬ ПО ПОЗИЦИИ X
+    sort_items_by_posx = sorted(items, key=lambda x: x.pos_x, reverse=True) # СОРТИРОВКА ПО ПОЗИЦИИ X
+    for index in range(len(sort_items_by_posx)): 
         item = items[index]
+
+        marker_product = index+1
         all_info_item.append((pal_no, item.barcode, item.product,
-                                 timestamp, index))
+                                 timestamp, marker_product)) 
         
-        convert_data = convert_for_printer(item, index, pal_no, timestamp)
+        convert_data = convert_for_printer(item, marker_product, pal_no, timestamp) # ПОКА ЧТО МАРКЕР ПРОДУКА ПО ИНДЕКСУ 1, 2. ПОТОМ ОТПРАВЛЯЕМ POSX И СОРТИРОВКА 
     
 
-        server_data.append(convert_data)
+        printer_data.append(convert_data)
 
 
     
-    print("Конвертированные данные:", server_data)
+    print("Конвертированные данные:", printer_data)
     print("Отчётная информация: ", all_info_item)
-    return server_data, all_info_item
+    return printer_data, all_info_item
 
 
 def convert_for_printer(row: Item, marker_product, pal_no, timestamp) -> dict: # Функция отвечает за формирования переменных для маркиратора
-    config.read('config.ini')
-    tp = config.get('Settings', 'technological_post')
-    num_line = config.get('Settings', 'technological_line')
+    config = Configurate().get_config()
+    tp = config.tp
+    num_line = config.technological_line
 
     result_dict = dict()
     product = re.search(r'_(.*?)_', row.product).group(1)

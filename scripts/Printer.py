@@ -1,29 +1,21 @@
-import asyncio
-import configparser
 import re
 import socket
 import time
-import datetime
 
-# from .ConnectionBroker import send_printing_info, update_status_db
-
-config = configparser.ConfigParser()
-
+from .connections.ConnectionsMS import send_printing_info, update_status_db
+from .connections.server_api import send_update_status_product, send_status_print
+from .configs import Configurate
 
 
-def connect():
-    config.read('config.ini')
-    ftp_server = config.get('Settings', 'ip_printer')
-    ftp_port = int(config.get('Settings', 'port_printer'))
+def connect_to_printer(config: Configurate):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((ftp_server, ftp_port))
+    s.connect((config.ip_printer, config.port_printer))
     res = s.recv(1024).decode('ascii')
-    print("Connect: ", res)
+    print(f"Статус подключения к принтеру: {res}")
     return s
 
 
 def convert_to_ascii(input_string: str) -> bytes:
-    print("конвертация для ", input_string)
     if input_string and any('а' <= str(char) <= 'я' or 'А' <= str(char) <= 'Я' for char in input_string):
         byte_string = input_string.encode('utf-8')
         hex_representation = byte_string.hex()
@@ -55,7 +47,6 @@ def extract_num_string(line):
         try:
             return True, int(second_line_segments[5]) - 1
         except ValueError:
-            print("Исключение в функции extract_num_string. Возвращаем str")
             return False, second_line_segments[5]
     else:
         return False, None
@@ -66,7 +57,8 @@ class Printer:
     data: dict
 
     def __init__(self, loop):
-        self.s = connect()
+        self.config = Configurate().get_config()
+        self.s = connect_to_printer(self.config)
         self.async_feedback = None
         self.status = "Wait"
         self.loop = loop
@@ -91,10 +83,11 @@ class Printer:
                         yield True
                     else:
                         print(f"Команда, асинхронно полученная от маркиратора: {feedback}. Продолжаем прослушивание")
+                        send_status_print(status="WAIT")
 
 
     def print_cycle(self, number_lines) -> str:
-        # send_printing_info(self.reporting_info)
+        send_printing_info(self.reporting_info)
         stop_status = self.get_stop_status()
         if not stop_status:
             self.stop_print()
@@ -131,7 +124,8 @@ class Printer:
         stop_info = self.listen_data(number_str=1)
         if str(stop_info) == "0000-ok: null\n":
             print("Оператор закончил печать изделия")
-            # update_status_db(self.reporting_info)
+            update_status_db(self.reporting_info)
+            send_update_status_product(self.reporting_info)
             return True
         else:
             return False
@@ -144,7 +138,7 @@ class Printer:
         buffer_log = self.s.recv(1024)
         last_line = buffer_log.splitlines()[-1]
         if last_line.decode('ascii').startswith("0000-ok"):
-            print(f"Стоп машина: {last_line}")
+            print(f"Остановка печати: {last_line}")
 
     def start_print(self):
         start_print_command = "000B|0000|100|/mnt/sdcard/MSG/G-1/|0|0000|0|0000|0D0A"
@@ -163,12 +157,11 @@ class Printer:
         if match:
             status = match.group(1)
             # Если True значит в работе, если False значит стоит
-            print("Стоп?", True if status == 'F' else False)
             return True if status == 'F' else False
         
 
 
-    def listen_data(self, number_str, timeout=None):
+    def listen_data(self, number_str, timeout=240):
         try:
             buffer_data = b""
             lines_received = 0
@@ -184,7 +177,6 @@ class Printer:
                 lines_received += buffer_data.decode('utf-8').count('\n')
 
             received_data = buffer_data.decode('utf-8')
-            print(f"Получено от устройства ({number_str} строк): {received_data}")
             return received_data
         except Exception as e:
             print(f"{e}. Продолжаем ожидание...")
@@ -224,7 +216,6 @@ class Printer:
         for index in range(len(send_data_text)):
             value_ascii = convert_to_ascii(str(send_data_text[index]))
             send_data_ascii.append(value_ascii)
-        print("-----------------Заполненные отправляемые данные: ", send_data_ascii)
 
         test = b''
         for i in range(len(send_data_ascii)):
@@ -236,7 +227,6 @@ class Printer:
             else:
                 test += send_data_ascii[i] + b","
         command_bytes = test + end_command_bytes + b"\n\r"
-        print("command_bytes:", command_bytes)
         self.s.sendall(command_bytes)
 
         self.s.recv(1024)
